@@ -51,7 +51,8 @@ name_mapper = data.frame(org_names, safe_names)
 write.csv(name_mapper, glue("{root_path}/{name_mapper_name}"))
 
 # add the cM position to each row of the snp array table
-joined_snp_cam = merge(snp_array, cam_map, by.x = "Probe_Set_ID", by.y = "marker")
+# joined_snp_cam = merge(snp_array, cam_map, by.x = "Probe_Set_ID", by.y = "marker")
+joined_snp_cam = snp_array
 
 # replace the org names in the cleaned_mm table with the safe names
 c <- colnames(joined_snp_cam)
@@ -63,18 +64,19 @@ for (i in seq(1, nrow(name_mapper))) {
 colnames(joined_snp_cam) <- c
 
 # remove rows where the position or cM is NA
-nrow(joined_snp_cam)
-nrow(snp_array)
-filtered_joined_snp_cam = joined_snp_cam %>% filter(!is.na(cM)) %>% filter(!is.na(Position))
-
+# filtered_joined_snp_cam = joined_snp_cam %>% filter(!is.na(cM)) %>% filter(!is.na(Position))
+filtered_joined_snp_cam = joined_snp_cam %>% filter(!is.na(Position))
 View(filtered_joined_snp_cam)
 
-necessary_cols = "(Organism*)|(Probe_Set_ID)|(Chromosome.x)|(Position)|(REF$)|(ALT)|(cM)"
-filtered_joined_snp_cam = filtered_joined_snp_cam %>% select(matches(necessary_cols))
+# necessary_cols = "(Organism*)|(Probe_Set_ID)|(Chromosome.x)|(Position)|(REF$)|(ALT)|(cM)"
+necessary_cols = "(Organism*)|(Probe_Set_ID)|(Chromosome)|(Position)|(REF$)|(ALT)"
+filtered_joined_snp_cam = as.data.frame(filtered_joined_snp_cam %>% select(matches(necessary_cols)))
+grouped_joined_snp_cam = filtered_joined_snp_cam %>% group_by(Chromosome) %>% arrange(Position, .by_group = TRUE)
+filtered_joined_snp_cam = grouped_joined_snp_cam
 View(filtered_joined_snp_cam)
 
 # create genotypes VCF file
-chrom_linkage_groups <- filtered_joined_snp_cam$Chromosome.x
+chrom_linkage_groups <- filtered_joined_snp_cam$Chromosome
 pos_vals <- filtered_joined_snp_cam$Position
 id_vals <- rep(NA, length(pos_vals))
 ref_vals <- filtered_joined_snp_cam$REF
@@ -95,48 +97,6 @@ fixedData <- data.table(
   INFO = info_vals
 )
 
-genotypeData <- as.matrix(fixedData, row.names = NULL)
-
-# chromosome | rs# / snp identifier | genetic distance (morgans) | base-pair position
-# Chromosome | SNP | cM / 100 | RR_Pos
-plink_map <- data.frame(
-  Chromosome = filtered_joined_snp_cam$Chromosome.x,
-  SNP_ID = filtered_joined_snp_cam$Probe_Set_ID,
-  Morgans = filtered_joined_snp_cam$cM / 100,
-  Pos = filtered_joined_snp_cam$Position
-)
-
-# sort by ascending cM order
-plink_map <- plink_map[order(plink_map$Morgans), ]
-
-# modify the pos values to be consistent with morgans ordering
-new_pos_vals <- plink_map$Pos
-old_pos_vals <- pos_vals
-
-for (j in seq(2, length(new_pos_vals))) {
-  curr_val <- new_pos_vals[j]
-  prev_val <- new_pos_vals[j - 1]
-  if (prev_val >= curr_val) {
-    new_pos_vals[j] <- prev_val + 1
-  }
-}
-new_pos_matcher <- data.frame(old_pos_vals, new_pos_vals)
-
-plink_map$Pos <- new_pos_vals
-
-# create map file
-write.table(plink_map, glue("{beagle_inputs_path}/strawberry.map"), row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
-
-fixed_pos_vals <- fixedData$POS
-for (j in seq(1, length(new_pos_vals))) {
-  curr_fp_val <- fixed_pos_vals[j]
-
-  # find curr_fp_val in new_pos_matcher
-  match <- new_pos_matcher[new_pos_matcher$old_pos_vals == curr_fp_val, ][1, "new_pos_vals"]
-  fixed_pos_vals[j] <- match
-}
-fixedData$POS <- fixed_pos_vals
-
 # replace cells: 0 => 0/0, 1 => 0/1, 2 => 1/1
 filtered_joined_snp_cam[] <- lapply(filtered_joined_snp_cam, gsub, pattern = " ", replacement = "")
 filtered_joined_snp_cam[filtered_joined_snp_cam == "0"] <- "0/0"
@@ -149,16 +109,17 @@ filtered_genotype_data <- filtered_joined_snp_cam[, filtered_joined_snp_cam_coln
 filtered_genotype_data$FORMAT <- rep("GT", length(pos_vals))
 filtered_genotype_data <- filtered_genotype_data[, c(length(colnames(filtered_genotype_data)), 1:length(colnames(filtered_genotype_data)) - 1)]
 
-genotypeData <- as.matrix(filtered_genotype_data)
-fixedData <- as.matrix(fixedData)
+genotypeData <- as.matrix(filtered_genotype_data, row.names = NULL)
+fixedData <- as.matrix(fixedData, row.names = NULL)
 
 View(genotypeData)
 View(fixedData)
 
+nrow(fixedData)
+
 vcfData <- new("vcfR", meta = metaData, fix = fixedData, gt = genotypeData)
 write.vcf(vcfData, file = glue("{beagle_inputs_path}/unphased_genotypes.vcf.gz"))
 
-# 
 # generateMaskedFiles <- function(runNum, numMasked) {
 #   # split genotypes by linkage group
 #   chrGroupedAlleleFreqsData <- alleleFreqsData %>% group_by(Chr)
