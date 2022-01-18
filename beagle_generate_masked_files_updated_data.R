@@ -9,13 +9,11 @@ library(glue)
 library(lattice)
 library(ggplot2)
 
-num_linkage_groups = 28
-
 # file / path names
 root_path = "~/Documents/beagle/"
 provided_data_path = glue(root_path, "new_provided_data")
-beagle_inputs_path = glue(root_path, "new_inputs")
-beagle_outputs_path = glue(root_path, "new_outputs")
+beagle_inputs_path = glue(root_path, "new_inputs_by_organism")
+beagle_outputs_path = glue(root_path, "new_outputs_by_organism")
 
 dir.create(beagle_inputs_path)
 dir.create(beagle_outputs_path)
@@ -51,7 +49,7 @@ for (i in org_names) {
   count = count + 1
 }
 name_mapper = data.frame(org_names, safe_names)
-write.csv(name_mapper, glue("{root_path}/{name_mapper_name}"))
+write.csv(name_mapper, glue("{beagle_inputs_path}/{name_mapper_name}"))
 
 # add the cM position to each row of the snp array table
 # joined_snp_cam = merge(snp_array, cam_map, by.x = "Probe_Set_ID", by.y = "marker")
@@ -118,17 +116,31 @@ generateMaskedFiles <- function(runNum, numMasked) {
 
   # masking
   if (numMasked > 0) {
-    hetLocs <- which(filtered_genotype_data == "0/1", arr.ind = TRUE)
-    # randomly sample n hetLocs
-    hetLocsSelected <- hetLocs[sample(nrow(hetLocs), numMasked), ]
-    filtered_genotype_data_copy <- cbind(filtered_genotype_data)
+    # randomly sample n hetLocs (for each organism)
+    allHetLocs <- data.frame(
+      row = c(),
+      col = c()
+    )
+    hetLocs <- data.frame(which(filtered_genotype_data == "0/1", arr.ind = TRUE))
     
-    for (h in seq(1, nrow(hetLocsSelected))) {
-      currHetLoc <- hetLocsSelected[h, ]
-      filtered_genotype_data_copy[currHetLoc["row"], currHetLoc["col"]] = NA
+    for (i in seq(2, ncol(filtered_genotype_data))) {
+      hetLocsCurr = hetLocs[hetLocs$col == i, ]
+      hetLocsSelected = hetLocs[sample(nrow(hetLocs), numMasked), ]
+      
+      allHetLocs = rbind(allHetLocs, hetLocsSelected)
     }
+    
+    filtered_genotype_data_copy = cbind(filtered_genotype_data)
+    
+    for (h in seq(1, nrow(allHetLocs))) {
+      currHetLoc <- allHetLocs[h, ]
+      currX = currHetLoc$row
+      currY = currHetLoc$col
+      filtered_genotype_data_copy[currX, currY] = NA
+    }
+    
     # write masked hetLocs to file
-    write.csv(hetLocsSelected, glue("{beagle_inputs_path}/masking/{runNum}_inputs/masked_locations.csv"))
+    write.csv(allHetLocs, glue("{beagle_inputs_path}/masking/{runNum}_inputs/masked_locations.csv"))
   }
 
   fixedData <- as.matrix(fixedData, row.names = NULL)
@@ -137,7 +149,7 @@ generateMaskedFiles <- function(runNum, numMasked) {
   write.vcf(vcfData, file = glue("{beagle_inputs_path}/masking/{runNum}_inputs/genotype.vcf.gz"))
 }
 
-numMaskedArgs <- c(0, 2, 3, 5, 10, 15, 20, 50, 100, 200) # c(100, 200, 500, 1000, 2000)
+numMaskedArgs <- c(0, 2, 3, 5, 10, 15, 20, 50, 100, 200, 500, 1000, 2000, 5000) # c(100, 200, 500, 1000, 2000)
 for (i in seq(1, length(numMaskedArgs))) {
    generateMaskedFiles(i, numMaskedArgs[i])
 }
@@ -152,10 +164,9 @@ for (run_i in seq(1, length(numMaskedArgs))) {
   total_het_count <- 0
   
   input_dirs <- list.dirs(path = glue("{beagle_inputs_path}/masking/{run_i}_inputs/"), full.names = TRUE)
-  print(length(input_dirs))
   
   output_path <- glue("{beagle_outputs_path}/masking/{run_i}_outputs/1_phased_genotypes.vcf")
-  input_path <- glue("{beagle_inputs_path}/masking/{run_i}_inputs/cleaned_genotypes.vcf")
+  input_path <- glue("{beagle_inputs_path}/masking/1_inputs/cleaned_genotypes.vcf")
   het_locs_path <- glue("{beagle_inputs_path}/masking/{run_i}_inputs/masked_locations.csv")
   
   if (numMaskedArgs[run_i] == 0) {
@@ -171,7 +182,7 @@ for (run_i in seq(1, length(numMaskedArgs))) {
   curr_genotype_data <- as.data.table(curr_output@gt)
   curr_het_locs_data <- as.data.frame(read.csv(het_locs_path))
   
-  for (j in nrow(curr_het_locs_data)) {
+  for (j in seq(1, nrow(curr_het_locs_data))) {
     idx <- curr_het_locs_data[j, ]
     curr_out <- as.vector(unname(curr_genotype_data[idx$row]))
     curr_in <- as.vector(unname(curr_unphased_genotype_data[idx$row]))
@@ -179,10 +190,11 @@ for (run_i in seq(1, length(numMaskedArgs))) {
     curr_in_unphased <- curr_out[[idx$col]]
     curr_out_phased <- curr_out[[idx$col]]
     
-    print(curr_out_phased)
-    print(curr_in_unphased)
-    if (!is.na(curr_out_phased)) {
-      if (curr_out_phased == "0|1" || curr_out_phased == "1|0") {
+    if (!is.na(curr_out_phased) & !is.na(curr_in_unphased)) {
+      print("pair")
+      print(curr_out_phased)
+      print(curr_in_unphased)
+      if (curr_out_phased == curr_in_unphased) {
         het_phased_count = het_phased_count + 1;
       }
     }
