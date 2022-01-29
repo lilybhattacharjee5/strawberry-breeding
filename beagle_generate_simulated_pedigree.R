@@ -80,11 +80,12 @@ reproduce <- function(p1, p2, num_children, child_idx, marker_data, pedigree) {
 }
 
 # iterate through several generations, creating offspring from every selected pairing
-num_generations = 1
+num_generations = 2
 num_parents = num_founders
 num_total = num_founders
 max_children = 4
 pairings_per_generation = 0.8
+curr_parents = seq(1, num_founders)
 
 pedigree <- data.frame(
   organism = character(0),
@@ -97,6 +98,7 @@ for (i in seq(1, num_generations)) {
   possible_pairings = combn(1:num_parents, 2, simplify = FALSE)
   selected_pairings = sample(possible_pairings, num_pairings, replace = FALSE)
   num_children = 0
+  generation_children = c()
   for (pairing in selected_pairings) {
     curr_p1 = pairing[1]
     curr_p2 = pairing[2]
@@ -104,10 +106,12 @@ for (i in seq(1, num_generations)) {
     reproduction_results = reproduce(curr_p1, curr_p2, curr_num_children, num_total, new_marker_data, pedigree)
     new_marker_data = reproduction_results[[1]]
     pedigree = reproduction_results[[2]]
+    generation_children = c(generation_children, seq(num_children, num_children + curr_num_children))
     num_children = num_children + curr_num_children
     num_total = num_total + curr_num_children
   }
   num_parents = num_children
+  curr_parents = generation_children
 }
 
 View(new_marker_data)
