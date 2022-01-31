@@ -10,6 +10,8 @@ library(lattice)
 library(ggplot2)
 library(stringr)
 
+set.seed(5)
+
 # file / path names
 root_path = "~/Documents/beagle/"
 provided_data_path = glue(root_path, "new_provided_data")
@@ -21,33 +23,26 @@ dir.create(beagle_outputs_path)
 
 # get the markers 
 snp_array_name = "Factorial_50K_SNP_Array_Genotypes.csv"
-name_mapper_name = "organism_safe_name_mapper_updated_data.csv"
-cam_map_name = "camMap.csv"
-
 snp_array = read.csv(glue("{provided_data_path}/{snp_array_name}"))
-# cam_map = read.csv(glue("{provided_data_path}/{cam_map_name}"))
-
-View(snp_array)
 
 # grab (Probe_Set_ID, Chromosome, Position)
 marker_data = snp_array[c("Probe_Set_ID", "Chromosome", "Position")]
-View(marker_data)
 
 # create an initial set of randomized founder organisms
 new_marker_data <- marker_data
 num_founders = 5
 counter = 0
-unphased_genotypes = c("0/0", "0/1", "1/1")
+phased_genotypes = c("0|0", "0|1", "1|1", "1|0")
 for (i in seq(1, num_founders)) {
-  new_founder_data = sample(unphased_genotypes, nrow(marker_data), replace = TRUE)
+  new_founder_data = sample(phased_genotypes, nrow(marker_data), replace = TRUE)
   new_organism_name = glue("Organism_{counter}")
   new_marker_data$new_organism = new_founder_data
   new_marker_data = rename(new_marker_data, !!new_organism_name := "new_organism")
   counter = counter + 1
 }
 
-strsplit_slash <- function(x) {
-  return(strsplit(x, "/"))
+strsplit_pipe <- function(x) {
+  return(strsplit(x, "\\|"))
 }
 
 create_child <- function(x) {
@@ -61,14 +56,14 @@ reproduce <- function(p1, p2, num_children, child_idx, marker_data, pedigree) {
   p1_data = marker_data[[p1_name]]
   p2_data = marker_data[[p2_name]]
   
-  p1_vals = sapply(p1_data, strsplit_slash)
-  p2_vals = sapply(p2_data, strsplit_slash)
+  p1_vals = sapply(p1_data, strsplit_pipe)
+  p2_vals = sapply(p2_data, strsplit_pipe)
   
   p1_child_vals = sapply(p1_vals, create_child)
   p2_child_vals = sapply(p2_vals, create_child)
   
   for (i in seq(1, num_children)) {
-    p1_p2_child = paste0(p1_child_vals, "/", p2_child_vals)
+    p1_p2_child = paste0(p1_child_vals, "|", p2_child_vals)
     new_organism_name = glue("Organism_{child_idx}")
     marker_data$new_organism = p1_p2_child
     marker_data = rename(marker_data, !!new_organism_name := "new_organism")
@@ -116,3 +111,157 @@ for (i in seq(1, num_generations)) {
 
 View(new_marker_data)
 View(pedigree)
+
+write.csv(pedigree, glue("{beagle_inputs_path}/pedigree.csv"))
+
+# randomly mask (i.e. set to NA) X genotypes per organism
+num_masked = c(0, 2, 5, 10, 20, 50, 100) #, 500, 1000, 2000, 5000)
+
+# create genotype VCF data structure
+new_marker_data = new_marker_data %>% group_by(Chromosome) %>% arrange(Position, .by_group = TRUE)
+metadata <- c(
+  "##fileformat=VCFv4.1",
+  "##source=StrawberryBreeding",
+  "##phasing=partial",
+  "##FILTER=<ID=PASS,Description=PASS>",
+  "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">"
+)
+chrom_linkage_groups <- new_marker_data$Chromosome
+pos_vals <- new_marker_data$Position
+id_vals <- rep(NA, length(pos_vals))
+ref_vals <- rep("A", length(pos_vals))
+alt_vals <- rep("G", length(pos_vals))
+qual_vals <- rep(99, length(pos_vals))
+filter_vals <- rep(NA, length(pos_vals))
+info_vals <- rep(NA, length(pos_vals))
+format_vals <- rep("GT", length(pos_vals))
+
+fixed_data <- data.table(
+  CHROM = chrom_linkage_groups,
+  POS = pos_vals,
+  ID = id_vals,
+  REF = ref_vals,
+  ALT = alt_vals,
+  QUAL = qual_vals,
+  FILTER = filter_vals,
+  INFO = info_vals,
+  FORMAT = format_vals
+)
+fixed_data <- as.matrix(fixed_data, row.names = NULL)
+genotype_data <- as.matrix(new_marker_data[, seq(4, ncol(new_marker_data))], row.names = NULL)
+vcf_data <- new("vcfR", meta = metadata, fix = fixed_data, gt = genotype_data)
+write.vcf(vcf_data, file = glue("{beagle_inputs_path}/phased_genotype.vcf.gz"))
+View(new_marker_data)
+
+new_marker_unphased <- data.frame(lapply(new_marker_data, function(x) {
+  gsub("\\|", "/", x)
+}))
+new_marker_unphased <- data.frame(lapply(new_marker_unphased, function(x) {
+  gsub("1/0", "0/1", x)
+}))
+
+run_num = 0
+for (n in num_masked) {
+  # masking
+  filtered_genotype_data <- new_marker_unphased[, seq(4, ncol(new_marker_unphased))]
+  
+  dir.create(glue("{beagle_inputs_path}/{run_num}_inputs"))
+  
+  if (n > 0) {
+    # randomly sample n hetLocs (for each organism)
+    all_het_locs <- data.frame(
+      row = c(),
+      col = c()
+    )
+    het_locs <- data.frame(which(filtered_genotype_data == "0/1", arr.ind = TRUE))
+    
+    for (i in seq(1, ncol(filtered_genotype_data))) {
+      het_locs_curr = het_locs[het_locs$col == i, ]
+      het_locs_selected = het_locs[sample(nrow(het_locs), n), ]
+      
+      all_het_locs = rbind(all_het_locs, het_locs_selected)
+    }
+    
+    filtered_genotype_data_copy <- filtered_genotype_data
+    
+    for (h in seq(1, nrow(all_het_locs))) {
+      curr_het_loc <- all_het_locs[h, ]
+      curr_x = curr_het_loc$row
+      curr_y = curr_het_loc$col
+      filtered_genotype_data_copy[curr_x, curr_y] = NA
+    }
+    
+    filtered_genotype_data = filtered_genotype_data_copy
+    
+    # write masked hetLocs to file
+    write.csv(all_het_locs, glue("{beagle_inputs_path}/{run_num}_inputs/masked_locations.csv"))
+  }
+  genotype_data <- as.matrix(filtered_genotype_data, row.names = NULL)
+  vcf_data <- new("vcfR", meta = metadata, fix = fixed_data, gt = genotype_data)
+  
+  # save genotype + pedigree data
+  write.vcf(vcf_data, file = glue("{beagle_inputs_path}/{run_num}_inputs/genotype.vcf.gz"))
+  run_num = run_num + 1
+  print(glue("{n} masked / organism done"))
+}
+
+# check the robustness of beagle outputs
+ratio <- c()
+# combine the output vcf files
+for (run_i in seq(0, length(num_masked))) { 
+  het_phased_count <- 0
+  total_het_count <- 0
+  
+  input_dirs <- list.dirs(path = glue("{beagle_inputs_path}/{run_i}_inputs/"), full.names = TRUE)
+  
+  output_path <- glue("{beagle_outputs_path}/{run_i}_outputs/1_phased_genotypes.vcf")
+  input_path <- glue("{beagle_inputs_path}/phased_genotype.vcf")
+  het_locs_path <- glue("{beagle_inputs_path}/{run_i}_inputs/masked_locations.csv")
+  
+  curr_output <- read.vcfR(output_path)
+  curr_input <- read.vcfR(input_path)
+  
+  curr_fixed_data <- as.data.table(curr_output@fix)
+  correct_genotype_data <- as.data.table(curr_input@gt)
+  curr_genotype_data <- as.data.table(curr_output@gt)
+
+  tryCatch(
+    expr = {
+      curr_het_locs_data <- as.data.frame(read.csv(het_locs_path))
+    },
+    error = function(e){ 
+      curr_het_locs_data = as.data.frame(data.table(
+        row = c(),
+        col = c()
+      ))
+    }
+  )
+  
+  for (j in seq(1, nrow(curr_het_locs_data))) {
+    idx <- curr_het_locs_data[j, ]
+    curr_in <- as.vector(unname(correct_genotype_data[idx$row]))
+    curr_out <- as.vector(unname(curr_genotype_data[idx$row]))
+    
+    curr_in_unphased <- curr_in[[idx$col]]
+    curr_out_phased <- curr_out[[idx$col]]
+    
+    if (!is.na(curr_out_phased) & !is.na(curr_in_unphased)) {
+      if (curr_out_phased == curr_in_unphased) {
+        het_phased_count = het_phased_count + 1;
+      }
+    }
+  }
+  
+  total_het_count = total_het_count + nrow(curr_het_locs_data)
+  
+  ratio <- c(ratio, het_phased_count / total_het_count)
+  print(glue("input run {run_i} correctly phased heterozygous ratio {het_phased_count / total_het_count} total phased correctly {het_phased_count} total het {total_het_count}"))
+}
+
+print(ratio)
+
+# graph correctly phased heterozygous ratio
+heterozygous_phased_ratio <- data.frame(num_masked = num_masked, correctly_phased_ratio = ratio)
+head(heterozygous_phased_ratio)
+ggplot(data = heterozygous_phased_ratio, aes(x = num_masked, y = correctly_phased_ratio)) + geom_line() + geom_point() + ggtitle("Correctly Phased Heterozygous Ratio vs. Number of Masked Unphased Genotypes") + xlab("Number of Masked Unphased Genotypes") + ylab("Correctly Phased Heterozygous Ratio")
+ggsave(glue("{beagle_outputs_path}/correctly_masked_ratio.png"))

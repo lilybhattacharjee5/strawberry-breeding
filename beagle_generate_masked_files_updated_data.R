@@ -144,7 +144,7 @@ generateMaskedFiles <- function(runNum, numMasked) {
   }
 
   fixedData <- as.matrix(fixedData, row.names = NULL)
-  genotypeData <- as.matrix(filtered_genotype_data, row.names = NULL)
+  genotypeData <- as.matrix(filtered_genotype_data_copy, row.names = NULL)
   vcfData <- new("vcfR", meta = metaData, fix = fixedData, gt = genotypeData)
   write.vcf(vcfData, file = glue("{beagle_inputs_path}/masking/{runNum}_inputs/genotype.vcf.gz"))
 }
