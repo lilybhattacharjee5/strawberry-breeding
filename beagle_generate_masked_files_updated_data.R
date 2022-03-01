@@ -214,3 +214,4 @@ head(heterozygous_phased_ratio)
 ggplot(data = heterozygous_phased_ratio, aes(x = num_masked, y = correctly_phased_ratio)) + geom_line() + geom_point() + ggtitle("Correctly Phased Heterozygous Ratio vs. Number of Masked Unphased Genotypes") + xlab("Number of Masked Unphased Genotypes") + ylab("Correctly Phased Heterozygous Ratio")
 ggsave(glue("{beagle_outputs_path}/masking/correctly_masked_ratio.png"))
 
+sum(is.na(genotypeData)) / (nrow(genotypeData) * (ncol(genotypeData) - 1))
