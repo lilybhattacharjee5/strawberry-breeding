@@ -9,14 +9,15 @@ library(glue)
 library(lattice)
 library(ggplot2)
 library(stringr)
+library(MoBPS)
 
 set.seed(5)
 
 # file / path names
 root_path = "~/Documents/beagle/"
 provided_data_path = glue(root_path, "new_provided_data")
-beagle_inputs_path = glue(root_path, "simulated_inputs")
-beagle_outputs_path = glue(root_path, "simulated_outputs")
+beagle_inputs_path = glue(root_path, "simulated_inputs_rebred")
+beagle_outputs_path = glue(root_path, "simulated_outputs_rebred")
 
 dir.create(beagle_inputs_path)
 dir.create(beagle_outputs_path)
@@ -28,51 +29,77 @@ snp_array = read.csv(glue("{provided_data_path}/{snp_array_name}"))
 # grab (Probe_Set_ID, Chromosome, Position)
 marker_data = snp_array[c("Probe_Set_ID", "Chromosome", "Position")]
 
-# create an initial set of randomized founder organisms
-new_marker_data <- marker_data
-num_founders = 5
-counter = 0
-phased_genotypes = c("0|0", "0|1", "1|1", "1|0")
-for (i in seq(1, num_founders)) {
-  new_founder_data = sample(phased_genotypes, nrow(marker_data), replace = TRUE)
-  new_organism_name = glue("Organism_{counter}")
-  new_marker_data$new_organism = new_founder_data
-  new_marker_data = rename(new_marker_data, !!new_organism_name := "new_organism")
-  counter = counter + 1
-}
+# # how many founders have no NA SNPs? 0
+# # which ones have the minimum number of NA SNPs?
+# # grab 5 founders from the ordered set according to the number of NAs in the corresponding column
+# genotype_data = snp_array[, seq(6, ncol(snp_array))]
+# chosen_founders = names(sort(colSums(is.na(genotype_data)))[1:5])
+# print(chosen_founders)
+# chosen_founder_data = snp_array[, chosen_founders]
+# View(chosen_founder_data)
+# 
+# # replace the 2's => 1|1, 1's => 0|1 or 1|0, 0's => 0|0
+# chosen_founder_data[chosen_founder_data == 2] <- "1|1"
+# chosen_founder_data[chosen_founder_data == 0] <- "0|0"
+# chosen_founder_data[chosen_founder_data == 1] <- sample(c("0|1", "1|0"), 1)
+# 
+# # replace the Organism names with safe names
+# counter = 0
+# for (c in colnames(chosen_founder_data)) {
+#   chosen_founder_data = rename(chosen_founder_data, !!glue("Organism_{counter}") := all_of(c))
+#   counter = counter + 1
+# }
+
+# View(chosen_founder_data)
+# 
+# # use mobps to breed the founders over several generations
+
+
+# # create an initial set of randomized founder organisms
+# new_marker_data <- marker_data
+# num_founders = 5
+# counter = 0
+# phased_genotypes = c("0|0", "0|1", "1|1", "1|0")
+# for (i in seq(1, num_founders)) {
+#   new_founder_data = sample(phased_genotypes, nrow(marker_data), replace = TRUE)
+#   new_organism_name = glue("Organism_{counter}")
+#   new_marker_data$new_organism = new_founder_data
+#   new_marker_data = rename(new_marker_data, !!new_organism_name := "new_organism")
+#   counter = counter + 1
+# }
 
 strsplit_pipe <- function(x) {
   return(strsplit(x, "\\|"))
 }
 
-create_child <- function(x) {
-  return(sample(x, 1, replace = TRUE)[1])
-}
- 
-reproduce <- function(p1, p2, num_children, child_idx, marker_data, pedigree) {
-  p1_name = glue("Organism_{p1}")
-  p2_name = glue("Organism_{p2}")
-  
-  p1_data = marker_data[[p1_name]]
-  p2_data = marker_data[[p2_name]]
-  
-  p1_vals = sapply(p1_data, strsplit_pipe)
-  p2_vals = sapply(p2_data, strsplit_pipe)
-  
-  p1_child_vals = sapply(p1_vals, create_child)
-  p2_child_vals = sapply(p2_vals, create_child)
-  
-  for (i in seq(1, num_children)) {
-    p1_p2_child = paste0(p1_child_vals, "|", p2_child_vals)
-    new_organism_name = glue("Organism_{child_idx}")
-    marker_data$new_organism = p1_p2_child
-    marker_data = rename(marker_data, !!new_organism_name := "new_organism")
-    child_idx = child_idx + 1
-    pedigree[nrow(pedigree) + 1, ] = c(new_organism_name, p1_name, p2_name)
-  }
-  
-  return(list(marker_data, pedigree))
-}
+# create_child <- function(x) {
+#   return(sample(x, 1, replace = TRUE)[1])
+# }
+#  
+# reproduce <- function(p1, p2, num_children, child_idx, marker_data, pedigree) {
+#   p1_name = glue("Organism_{p1}")
+#   p2_name = glue("Organism_{p2}")
+#   
+#   p1_data = marker_data[[p1_name]]
+#   p2_data = marker_data[[p2_name]]
+#   
+#   p1_vals = sapply(p1_data, strsplit_pipe)
+#   p2_vals = sapply(p2_data, strsplit_pipe)
+#   
+#   p1_child_vals = sapply(p1_vals, create_child)
+#   p2_child_vals = sapply(p2_vals, create_child)
+#   
+#   for (i in seq(1, num_children)) {
+#     p1_p2_child = paste0(p1_child_vals, "|", p2_child_vals)
+#     new_organism_name = glue("Organism_{child_idx}")
+#     marker_data$new_organism = p1_p2_child
+#     marker_data = rename(marker_data, !!new_organism_name := "new_organism")
+#     child_idx = child_idx + 1
+#     pedigree[nrow(pedigree) + 1, ] = c(new_organism_name, p1_name, p2_name)
+#   }
+#   
+#   return(list(marker_data, pedigree))
+# }
 
 # iterate through several generations, creating offspring from every selected pairing
 num_generations = 2
@@ -214,7 +241,7 @@ for (run_i in seq(0, length(num_masked))) {
   
   input_dirs <- list.dirs(path = glue("{beagle_inputs_path}/{run_i}_inputs/"), full.names = TRUE)
   
-  output_path <- glue("{beagle_outputs_path}/{run_i}_outputs/1_phased_genotypes.vcf")
+  output_path <- glue("{beagle_outputs_path}/{run_i}_outputs_noimpute/1_phased_genotypes.vcf")
   input_path <- glue("{beagle_inputs_path}/phased_genotype.vcf")
   het_locs_path <- glue("{beagle_inputs_path}/{run_i}_inputs/masked_locations.csv")
   
@@ -224,6 +251,9 @@ for (run_i in seq(0, length(num_masked))) {
   curr_fixed_data <- as.data.table(curr_output@fix)
   correct_genotype_data <- as.data.table(curr_input@gt)
   curr_genotype_data <- as.data.table(curr_output@gt)
+  
+  #View(correct_genotype_data)
+  #View(curr_genotype_data)
 
   tryCatch(
     expr = {
@@ -265,3 +295,5 @@ heterozygous_phased_ratio <- data.frame(num_masked = num_masked, correctly_phase
 head(heterozygous_phased_ratio)
 ggplot(data = heterozygous_phased_ratio, aes(x = num_masked, y = correctly_phased_ratio)) + geom_line() + geom_point() + ggtitle("Correctly Phased Heterozygous Ratio vs. Number of Masked Unphased Genotypes") + xlab("Number of Masked Unphased Genotypes") + ylab("Correctly Phased Heterozygous Ratio")
 ggsave(glue("{beagle_outputs_path}/correctly_masked_ratio.png"))
+
+(500 * ncol(correct_genotype_data)) / (nrow(correct_genotype_data) * ncol(correct_genotype_data))
