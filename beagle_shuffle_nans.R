@@ -10,6 +10,8 @@ library(foreach)
 library(doParallel)
 library(ranger)
 
+shuffle = FALSE
+
 load_data <- function(root_path, beagle_inputs_path, beagle_outputs_path) {
   # create inputs folder + subfolders
   dir.create(beagle_inputs_path)
@@ -153,30 +155,41 @@ generate_beagle_files <- function(beagle_inputs_path, beagle_outputs_path, genot
     "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">"
   )
   
-  if (original || all_masked) {
-    for (row in 1:nrow(na_locs)) {
-      na_row <- na_locs[row, "row"]
-      na_col <- na_locs[row, "col"]
-
-      filtered_genotype_data[na_row, na_col] <- NA
-    }
-  } else {
-    for (i in seq(1, length(unique(na_locs$col)))) {
-      curr_na_locs = na_locs[na_locs$col == i, ]
-      
-      if (num_masked > nrow(curr_na_locs)) {
-        random_na_locs = curr_na_locs[nrow(curr_na_locs), ]
-      } else {
-        random_na_locs = curr_na_locs[sample(nrow(curr_na_locs), num_masked), ]
-      }
-      
-      for (j in seq(1, nrow(random_na_locs))) {
-        curr_na_row = random_na_locs[j, "row"]
-        curr_na_col = random_na_locs[j, "col"]
+  # na_df = data.frame(
+  #   row = c(),
+  #   col = c()
+  # )
+  
+  if (num_masked > 0) {
+    if (original || all_masked) {
+      for (row in 1:nrow(na_locs)) {
+        na_row <- na_locs[row, "row"]
+        na_col <- na_locs[row, "col"]
         
-        filtered_genotype_data[curr_na_row, curr_na_col] <- NA
+        filtered_genotype_data[na_row, na_col] <- NA
+        # na_df[nrow(na_df) + 1,] <- c(na_row, na_col)
+      }
+    } else {
+      for (i in seq(1, length(unique(na_locs$col)))) {
+        curr_na_locs = na_locs[na_locs$col == i, ]
+        
+        if (num_masked > nrow(curr_na_locs)) {
+          random_na_locs = curr_na_locs[nrow(curr_na_locs), ]
+        } else {
+          random_na_locs = curr_na_locs[sample(nrow(curr_na_locs), num_masked), ]
+        }
+        
+        for (j in seq(1, nrow(random_na_locs))) {
+          curr_na_row = random_na_locs[j, "row"]
+          curr_na_col = random_na_locs[j, "col"]
+          
+          filtered_genotype_data[curr_na_row, curr_na_col] <- NA
+          # na_df[nrow(na_df) + 1,] <- c(curr_na_row, curr_na_col)
+        }
       }
     }
+    
+    # write.csv(na_df, glue("{beagle_inputs_path}/{subfolder}/{run_num}_inputs/na_locs.csv"))
   }
   
   fixed_data <- as.matrix(fixed_data, row.names = NULL)
@@ -208,8 +221,8 @@ phased_to_unphased <- function() {
 # RUN CODE
 root_path = "~/Documents/beagle/"
 provided_data_folder = "new_provided_data"
-inputs_folder = "shuffle_nans_inputs"
-outputs_folder = "shuffle_nans_outputs"
+inputs_folder = "no_shuffle_nans_inputs"
+outputs_folder = "no_shuffle_nans_outputs"
 
 root_path = "~/Documents/beagle/"
 provided_data_path = glue(root_path, provided_data_folder)
@@ -223,6 +236,7 @@ cam_map = loaded$cam
 
 name_mapper_name = "organism_safe_name_mapper.csv"
 map_safe_organism_names(snp_array, beagle_inputs_path, name_mapper_name)
+name_mapper = read.csv(glue("{beagle_inputs_path}/{name_mapper_name}"))
 
 filtered_joined_snp_cam = clean_snp_array(snp_array, cam_map)
 View(filtered_joined_snp_cam)
@@ -233,21 +247,27 @@ na_locs <- read.csv(glue("{beagle_inputs_path}/na_locs.csv"))
 mod_na_locs <- swap_na_patterns(beagle_inputs_path,na_locs)
 write.csv(mod_na_locs, glue("{beagle_inputs_path}/mod_na_locs.csv"))
 
+if (shuffle) {
+  mod_na_locs <- read.csv(glue("{beagle_inputs_path}/mod_na_locs.csv"))
+} else {
+  mod_na_locs <- read.csv(glue("{beagle_inputs_path}/na_locs.csv"))
+}
+
 # generate source of truth
-name_mapper = read.csv(glue("{beagle_inputs_path}/{name_mapper_name}"))
 generate_beagle_files(beagle_inputs_path, beagle_outputs_path, genotype_data, filtered_joined_snp_cam, name_mapper, na_locs, 1, original = TRUE)
 
 # run beagle on source of truth
-
 phased_results <- phased_to_unphased()
 original_genotype <- phased_results$gt
 original_unphased <- phased_results$all
 View(original_unphased)
 
 # all masked in modified locs
-generate_beagle_files(beagle_inputs_path, beagle_outputs_path, original_genotype, original_unphased, name_mapper, mod_na_locs, 1, all_masked = TRUE)
+dir.create(glue(beagle_inputs_path, "/all_masked"))
+dir.create(glue(beagle_outputs_path, "/all_masked"))
+generate_beagle_files(beagle_inputs_path, beagle_outputs_path, original_genotype, original_unphased, name_mapper, mod_na_locs, 1, num_masked = 1, all_masked = TRUE)
 
-num_masked_args = c(500, 300, 200, 100, 80, 50, 30, 20, 10, 5, 2)
+num_masked_args = c(500, 300, 200, 100, 80, 50, 30, 20, 10, 5, 2, 0)
 
 print("Generating masked location beagle input files")
 
@@ -256,4 +276,4 @@ for (i in seq(1, length(num_masked_args))) {
   print(glue("Generated files for {num_masked_args[i]}"))
 }
 
-# run beagle on farm on 
+# run beagle on farm
